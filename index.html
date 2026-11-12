@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Breakout – CabrilloCollege</title>
+<style>
+  html, body { height: 100%; margin: 0; background: #0b0f1a; }
+  body { display: flex; align-items: center; justify-content: center; font-family: "Courier New", monospace; }
+  canvas { background: #000; max-height: 100vh; max-width: 100%; aspect-ratio: 560 / 640; touch-action: none; cursor: none; box-shadow: 0 0 0 2px #223; }
+</style>
+</head>
+<body>
+<canvas id="game" width="560" height="640" aria-label="Breakout game"></canvas>
+<script>
+(() => {
+  const cv = document.getElementById('game');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+
+  // Classic Breakout rules: 8 rows x 14 columns, rows worth 7/7/5/5/3/3/1/1,
+  // 3 balls, ball speeds up with hits and on reaching the orange/red rows,
+  // paddle shrinks once the ball hits the top wall.
+  const COLS = 14, ROWS = 8, SIDE = 20, TOP = 100, GAP = 2, BH = 14;
+  const BW = (W - SIDE * 2) / COLS;
+  const ROW_COLORS = ['#c84630', '#c84630', '#c87c30', '#c87c30', '#30a050', '#30a050', '#b8b830', '#b8b830'];
+  const ROW_POINTS = [7, 7, 5, 5, 3, 3, 1, 1];
+  const LABEL = 'CabrilloCollege';
+  const FONT = (px) => `bold ${px}px "Courier New", monospace`;
+  const BALL = 8, PAD_Y = H - 56, PAD_H = 24;
+
+  let bricks, score, lives, hits, speed, ball, paddle, state, shrunk, redOrangeHit, keys = {};
+
+  function measure(px) { ctx.font = FONT(px); return ctx.measureText(LABEL).width; }
+
+  function reset() {
+    bricks = [];
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) bricks.push({ r, c, alive: true });
+    score = 0; lives = 3; shrunk = false;
+    paddle = { px: 24, w: measure(24), x: W / 2 - measure(24) / 2 };
+    newBall();
+  }
+  function newBall() {
+    hits = 0; speed = 4; redOrangeHit = false;
+    ball = { x: W / 2, y: PAD_Y - BALL, vx: 0, vy: 0 };
+    state = 'ready';
+  }
+  function launch() {
+    if (state === 'ready') {
+      const a = (Math.random() * 60 - 30) * Math.PI / 180;
+      ball.vx = Math.sin(a) * speed; ball.vy = -Math.cos(a) * speed;
+      state = 'play';
+    } else if (state === 'over' || state === 'won') { reset(); }
+  }
+  function setSpeed(s) {
+    speed = Math.max(speed, s);
+    const m = Math.hypot(ball.vx, ball.vy) || 1;
+    ball.vx = ball.vx / m * speed; ball.vy = ball.vy / m * speed;
+  }
+  function brickRect(b) { return { x: SIDE + b.c * BW, y: TOP + b.r * (BH + GAP), w: BW - GAP, h: BH }; }
+  function overlap(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+
+  function hitBrick() {
+    const box = { x: ball.x - BALL / 2, y: ball.y - BALL / 2, w: BALL, h: BALL };
+    for (const b of bricks) {
+      if (!b.alive) continue;
+      if (overlap(box, brickRect(b))) {
+        b.alive = false; score += ROW_POINTS[b.r]; hits++;
+        if (hits === 4) setSpeed(5); else if (hits === 12) setSpeed(6);
+        if (b.r < 4 && !redOrangeHit) { redOrangeHit = true; setSpeed(7); }
+        if (bricks.every(k => !k.alive)) state = 'won';
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function step() {
+    // paddle movement (keyboard)
+    const ps = 9;
+    if (keys.ArrowLeft || keys.a) paddle.x -= ps;
+    if (keys.ArrowRight || keys.d) paddle.x += ps;
+    paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+
+    if (state === 'ready') { ball.x = paddle.x + paddle.w / 2; ball.y = PAD_Y - BALL; return; }
+    if (state !== 'play') return;
+
+    // move X
+    ball.x += ball.vx;
+    if (ball.x < BALL / 2) { ball.x = BALL / 2; ball.vx *= -1; }
+    if (ball.x > W - BALL / 2) { ball.x = W - BALL / 2; ball.vx *= -1; }
+    if (hitBrick()) ball.vx *= -1;
+
+    // move Y
+    ball.y += ball.vy;
+    if (ball.y < BALL / 2) {
+      ball.y = BALL / 2; ball.vy = Math.abs(ball.vy);
+      if (!shrunk) { // paddle shrinks after the ball reaches the top wall
+        shrunk = true;
+        const cx = paddle.x + paddle.w / 2;
+        paddle.px = 15; paddle.w = measure(15);
+        paddle.x = Math.max(0, Math.min(W - paddle.w, cx - paddle.w / 2));
+      }
+    }
+    if (hitBrick()) ball.vy *= -1;
+
+    // paddle bounce: angle depends on where the ball strikes
+    const pr = { x: paddle.x, y: PAD_Y, w: paddle.w, h: PAD_H };
+    const box = { x: ball.x - BALL / 2, y: ball.y - BALL / 2, w: BALL, h: BALL };
+    if (ball.vy > 0 && overlap(box, pr) && ball.y < PAD_Y + PAD_H / 2) {
+      const off = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+      const a = Math.max(-1, Math.min(1, off)) * 60 * Math.PI / 180;
+      ball.vx = Math.sin(a) * speed; ball.vy = -Math.cos(a) * speed;
+      ball.y = PAD_Y - BALL / 2;
+    }
+
+    // missed
+    if (ball.y > H + 10) {
+      lives--;
+      if (lives <= 0) state = 'over'; else newBall();
+    }
+  }
+
+  function draw() {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    // HUD
+    ctx.fillStyle = '#ddd'; ctx.font = FONT(26); ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText(String(score).padStart(3, '0'), SIDE, 20);
+    ctx.textAlign = 'right'; ctx.fillText('BALL ' + Math.min(4 - lives + (state === 'over' ? 0 : 0), 3), W - SIDE, 20);
+    ctx.fillStyle = '#556'; ctx.fillRect(0, 62, W, 4);
+
+    for (const b of bricks) {
+      if (!b.alive) continue;
+      const r = brickRect(b);
+      ctx.fillStyle = ROW_COLORS[b.r]; ctx.fillRect(r.x, r.y, r.w, r.h);
+    }
+
+    // ball
+    ctx.fillStyle = '#fff'; ctx.fillRect(ball.x - BALL / 2, ball.y - BALL / 2, BALL, BALL);
+
+    // paddle = the words CabrilloCollege
+    ctx.font = FONT(paddle.px); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#4db8ff'; ctx.shadowBlur = 10;
+    ctx.fillStyle = '#4db8ff';
+    ctx.fillText(LABEL, paddle.x, PAD_Y + PAD_H / 2);
+    ctx.shadowBlur = 0;
+
+    ctx.textAlign = 'center';
+    if (state === 'ready') {
+      ctx.fillStyle = '#ddd'; ctx.font = FONT(16);
+      ctx.fillText('Click / tap / Space to serve', W / 2, H / 2 + 80);
+      ctx.fillStyle = '#889'; ctx.font = FONT(13);
+      ctx.fillText('Move: mouse, touch or ← → keys', W / 2, H / 2 + 104);
+    }
+    if (state === 'over' || state === 'won') {
+      ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(0, H / 2 - 60, W, 130);
+      ctx.fillStyle = state === 'won' ? '#30d060' : '#e05040'; ctx.font = FONT(34);
+      ctx.fillText(state === 'won' ? 'BOARD CLEARED!' : 'GAME OVER', W / 2, H / 2 - 22);
+      ctx.fillStyle = '#ddd'; ctx.font = FONT(16);
+      ctx.fillText('Score ' + score + '  –  click or press Space to play again', W / 2, H / 2 + 28);
+    }
+  }
+
+  // fixed 60 Hz loop
+  let last = performance.now(), acc = 0;
+  function loop(t) {
+    acc += Math.min(100, t - last); last = t;
+    while (acc >= 1000 / 60) { step(); acc -= 1000 / 60; }
+    draw(); requestAnimationFrame(loop);
+  }
+
+  // input
+  function setPaddleFromEvent(clientX) {
+    const rect = cv.getBoundingClientRect();
+    const x = (clientX - rect.left) * (W / rect.width);
+    paddle.x = Math.max(0, Math.min(W - paddle.w, x - paddle.w / 2));
+  }
+  cv.addEventListener('mousemove', e => setPaddleFromEvent(e.clientX));
+  cv.addEventListener('mousedown', launch);
+  cv.addEventListener('touchstart', e => { setPaddleFromEvent(e.touches[0].clientX); launch(); e.preventDefault(); }, { passive: false });
+  cv.addEventListener('touchmove', e => { setPaddleFromEvent(e.touches[0].clientX); e.preventDefault(); }, { passive: false });
+  addEventListener('keydown', e => {
+    keys[e.key] = true;
+    if (e.key === ' ') { launch(); e.preventDefault(); }
+    if (e.key.startsWith('Arrow')) e.preventDefault();
+  });
+  addEventListener('keyup', e => { keys[e.key] = false; });
+
+  reset();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
